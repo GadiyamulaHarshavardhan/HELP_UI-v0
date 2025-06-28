@@ -22,69 +22,65 @@
 </script>
 
 <DropdownMenu.Root
-	bind:open={show}
-	closeFocus={false}
-	onOpenChange={(state) => {
-		if (state === false) {
-			onClose();
-		}
-	}}
-	typeahead={false}
+    bind:open={show}
+    closeFocus={false}
+    onOpenChange={(state) => {
+        if (state === false) {
+            onClose();
+        }
+    }}
+    typeahead={false}
 >
-	<DropdownMenu.Trigger>
-		<Tooltip content={$i18n.t('More')} className=" group-hover/item:opacity-100  opacity-0">
-			<slot />
-		</Tooltip>
-	</DropdownMenu.Trigger>
+    <DropdownMenu.Trigger>
+        <Tooltip content={$i18n.t('More')} className="group-hover/item:opacity-100 opacity-0">
+            <slot />
+        </Tooltip>
+    </DropdownMenu.Trigger>
 
-	<DropdownMenu.Content
-		strategy="fixed"
-		class="w-full max-w-[180px] text-sm rounded-xl px-1 py-1.5 z-[9999999] bg-white dark:bg-gray-850 dark:text-white shadow-lg"
-		sideOffset={-2}
-		side="bottom"
-		align="end"
-		transition={flyAndScale}
-	>
-		<button
-			type="button"
-			class="flex rounded-md py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition items-center gap-2"
-			on:click={(e) => {
-				e.stopPropagation();
-				e.preventDefault();
+    <DropdownMenu.Content
+        strategy="fixed"
+        class="w-full max-w-[200px] text-sm rounded-lg px-1 py-1 z-[9999999] bg-[#ffffff] dark:bg-[#2e2e32] border border-[#e5e5e6] dark:border-[#3d3d3f] shadow-sm"
+        sideOffset={5}
+        side="bottom"
+        align="end"
+        transition={flyAndScale}
+    >
+        <button
+            type="button"
+            class="flex rounded-md py-2 px-3 w-full hover:bg-[#f7f7f8] dark:hover:bg-[#38383b] transition items-center gap-3 text-[#40414f] dark:text-[#e0e0e0]"
+            on:click={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                pinModelHandler(model?.id);
+                show = false;
+            }}
+        >
+            {#if ($settings?.pinnedModels ?? []).includes(model?.id)}
+                <EyeSlash className="size-4 text-[#8e8e9e] dark:text-[#a0a0a5]" />
+            {:else}
+                <Eye className="size-4 text-[#8e8e9e] dark:text-[#a0a0a5]" />
+            {/if}
+            <div class="flex items-center text-sm">
+                {#if ($settings?.pinnedModels ?? []).includes(model?.id)}
+                    {$i18n.t('Hide from Sidebar')}
+                {:else}
+                    {$i18n.t('Keep in Sidebar')}
+                {/if}
+            </div>
+        </button>
 
-				pinModelHandler(model?.id);
-				show = false;
-			}}
-		>
-			{#if ($settings?.pinnedModels ?? []).includes(model?.id)}
-				<EyeSlash />
-			{:else}
-				<Eye />
-			{/if}
-
-			<div class="flex items-center">
-				{#if ($settings?.pinnedModels ?? []).includes(model?.id)}
-					{$i18n.t('Hide from Sidebar')}
-				{:else}
-					{$i18n.t('Keep in Sidebar')}
-				{/if}
-			</div>
-		</button>
-
-		<button
-			type="button"
-			class="flex rounded-md py-1.5 px-3 w-full hover:bg-gray-50 dark:hover:bg-gray-800 transition items-center gap-2"
-			on:click={(e) => {
-				e.stopPropagation();
-				e.preventDefault();
-
-				copyLinkHandler();
-				show = false;
-			}}
-		>
-			<Link />
-
-			<div class="flex items-center">{$i18n.t('Copy Link')}</div>
-		</button>
-	</DropdownMenu.Content>
+        <button
+            type="button"
+            class="flex rounded-md py-2 px-3 w-full hover:bg-[#f7f7f8] dark:hover:bg-[#38383b] transition items-center gap-3 text-[#40414f] dark:text-[#e0e0e0]"
+            on:click={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                copyLinkHandler();
+                show = false;
+            }}
+        >
+            <Link className="size-4 text-[#8e8e9e] dark:text-[#a0a0a5]" />
+            <div class="flex items-center text-sm">{$i18n.t('Copy Link')}</div>
+        </button>
+    </DropdownMenu.Content>
 </DropdownMenu.Root>

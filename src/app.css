@@ -1,32 +1,32 @@
 @reference "./tailwind.css";
 
 @font-face {
-	font-family: 'Inter';
-	src: url('/assets/fonts/Inter-Variable.ttf');
+	font-family: 'Playfair_Display';
+	src: url('assets/fonts/Playfair_Display/PlayfairDisplay-Italic-VariableFont_wght.ttf');
 	font-display: swap;
 }
 
 @font-face {
-	font-family: 'Archivo';
-	src: url('/assets/fonts/Archivo-Variable.ttf');
+	font-family: 'Playfair_Display';
+	src: url('assets/fonts/Playfair_Display/PlayfairDisplay-Italic-VariableFont_wght.ttf');
 	font-display: swap;
 }
 
 @font-face {
-	font-family: 'Mona Sans';
-	src: url('/assets/fonts/Mona-Sans.woff2');
+	font-family: 'Playfair_Display';
+	src: url('assets/fonts/Playfair_Display/PlayfairDisplay-Italic-VariableFont_wght.ttf');
 	font-display: swap;
 }
 
 @font-face {
-	font-family: 'InstrumentSerif';
-	src: url('/assets/fonts/InstrumentSerif-Regular.ttf');
+	font-family: 'Playfair_Display';
+	src: url('assets/fonts/Playfair_Display/PlayfairDisplay-Italic-VariableFont_wght.ttf');
 	font-display: swap;
 }
 
 @font-face {
-	font-family: 'Vazirmatn';
-	src: url('/assets/fonts/Vazirmatn-Variable.ttf');
+	font-family: 'Playfair_Display';
+	src: url('assets/fonts/Playfair_Display/PlayfairDisplay-Italic-VariableFont_wght.ttf');
 	font-display: swap;
 }
 

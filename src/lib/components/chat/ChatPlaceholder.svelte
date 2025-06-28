@@ -1,140 +1,217 @@
 <script lang="ts">
-	import { WEBUI_BASE_URL } from '$lib/constants';
-	import { marked } from 'marked';
+    import { SvelteFlowProvider } from '@xyflow/svelte';
+    import { Pane, PaneResizer } from 'paneforge';
 
-	import { config, user, models as _models, temporaryChatEnabled } from '$lib/stores';
-	import { onMount, getContext } from 'svelte';
+    import { onDestroy, onMount } from 'svelte';
+    import { mobile, showControls, showCallOverlay, showOverview, showArtifacts, isAdmin } from '$lib/stores';
 
-	import { blur, fade } from 'svelte/transition';
+    import Modal from '../common/Modal.svelte';
+    import Controls from './Controls/Controls.svelte';
+    import CallOverlay from './MessageInput/CallOverlay.svelte';
+    import Drawer from '../common/Drawer.svelte';
+    import Overview from './Overview.svelte';
+    import EllipsisVertical from '../icons/EllipsisVertical.svelte';
+    import Artifacts from './Artifacts.svelte';
 
-	import Suggestions from './Suggestions.svelte';
-	import { sanitizeResponseContent } from '$lib/utils';
-	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import EyeSlash from '$lib/components/icons/EyeSlash.svelte';
+    export let history;
+    export let models = [];
 
-	const i18n = getContext('i18n');
+    export let chatId = null;
 
-	export let modelIds = [];
-	export let models = [];
-	export let atSelectedModel;
+    export let chatFiles = [];
+    export let params = {};
 
-	export let submitPrompt;
+    export let eventTarget: EventTarget;
+    export let submitPrompt: Function;
+    export let stopResponse: Function;
+    export let showMessage: Function;
+    export let files;
+    export let modelId;
 
-	let mounted = false;
-	let selectedModelIdx = 0;
+    export let pane;
 
-	$: if (modelIds.length > 0) {
-		selectedModelIdx = models.length - 1;
-	}
+    let mediaQuery;
+    let largeScreen = false;
+    let dragged = false;
+    let minSize = 0;
 
-	$: models = modelIds.map((id) => $_models.find((m) => m.id === id));
+    const openPane = () => {
+        const size = parseInt(localStorage?.chatControlsSize) || minSize;
+        if (pane && pane.resize) pane.resize(size);
+    };
 
-	onMount(() => {
-		mounted = true;
-	});
+    const handleMediaQuery = async (e) => {
+        largeScreen = e.matches;
+
+        if ($showCallOverlay) {
+            showCallOverlay.set(false);
+            await tick();
+            showCallOverlay.set(true);
+        }
+
+        if (!largeScreen) pane = null;
+    };
+
+    onMount(() => {
+        mediaQuery = window.matchMedia('(min-width: 1024px)');
+        mediaQuery.addEventListener('change', handleMediaQuery);
+        handleMediaQuery(mediaQuery);
+
+        const container = document.getElementById('chat-container');
+        minSize = Math.floor((350 / container.clientWidth) * 100);
+
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const width = entry.contentRect.width;
+                const percentage = (350 / width) * 100;
+                minSize = Math.floor(percentage);
+
+                if ($showControls && $isAdmin && pane && pane.isExpanded() && pane.getSize() < minSize) {
+                    pane.resize(minSize);
+                }
+            }
+        });
+
+        resizeObserver.observe(container);
+
+        return () => {
+            mediaQuery.removeEventListener('change', handleMediaQuery);
+            resizeObserver.disconnect();
+        };
+    });
+
+    onDestroy(() => {
+        showControls.set(false);
+    });
+
+    const closeHandler = () => {
+        showControls.set(false);
+        showOverview.set(false);
+        showArtifacts.set(false);
+        if ($showCallOverlay) showCallOverlay.set(false);
+    };
+
+    $: if (!chatId) {
+        closeHandler();
+    }
 </script>
 
-{#key mounted}
-	<div class="m-auto w-full max-w-6xl px-8 lg:px-20">
-		<div class="flex justify-start">
-			<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 200 }}>
-				{#each models as model, modelIdx}
-					<button
-						on:click={() => {
-							selectedModelIdx = modelIdx;
-						}}
-					>
-						<Tooltip
-							content={marked.parse(
-								sanitizeResponseContent(models[selectedModelIdx]?.info?.meta?.description ?? '')
-							)}
-							placement="right"
-						>
-							<img
-								crossorigin="anonymous"
-								src={model?.info?.meta?.profile_image_url ??
-									($i18n.language === 'dg-DG'
-										? `/doge.png`
-										: `${WEBUI_BASE_URL}/static/favicon.png`)}
-								class=" size-[2.7rem] rounded-full border-[1px] border-gray-100 dark:border-none"
-								alt="logo"
-								draggable="false"
-							/>
-						</Tooltip>
-					</button>
-				{/each}
-			</div>
-		</div>
+<SvelteFlowProvider>
+    <!-- Mobile View -->
+    {#if !largeScreen}
+        {#if $showControls && $isAdmin}
+            <Drawer
+                show={$showControls}
+                onClose={() => {
+                    showControls.set(false);
+                }}
+            >
+                <div class="{$showCallOverlay || $showOverview || $showArtifacts ? 'h-screen w-full' : 'px-6 py-4'} h-full">
+                    {#if $showCallOverlay}
+                        <div class="h-full max-h-[100dvh] bg-white text-gray-700 dark:bg-black dark:text-gray-300 flex justify-center">
+                            <CallOverlay
+                                bind:files
+                                {submitPrompt}
+                                {stopResponse}
+                                {modelId}
+                                {chatId}
+                                {eventTarget}
+                                on:close={() => {
+                                    showControls.set(false);
+                                }}
+                            />
+                        </div>
+                    {:else if $showArtifacts}
+                        <Artifacts {history} />
+                    {:else if $showOverview}
+                        <Overview
+                            {history}
+                            on:nodeclick={(e) => {
+                                showMessage(e.detail.node.data.message);
+                            }}
+                            on:close={() => {
+                                showControls.set(false);
+                            }}
+                        />
+                    {:else}
+                        <Controls
+                            on:close={() => {
+                                showControls.set(false);
+                            }}
+                            {models}
+                            bind:chatFiles
+                            bind:params
+                        />
+                    {/if}
+                </div>
+            </Drawer>
+        {/if}
+    {:else}
+        <!-- Desktop View -->
+        {#if $showControls && $isAdmin}
+            <PaneResizer class="relative flex w-2 items-center justify-center bg-background group">
+                <div class="z-10 flex h-7 w-5 items-center justify-center rounded-xs">
+                    <EllipsisVertical className="size-4 invisible group-hover:visible" />
+                </div>
+            </PaneResizer>
+        {/if}
 
-		{#if $temporaryChatEnabled}
-			<Tooltip
-				content={$i18n.t('This chat won’t appear in history and your messages will not be saved.')}
-				className="w-full flex justify-start mb-0.5"
-				placement="top"
-			>
-				<div class="flex items-center gap-2 text-gray-500 font-medium text-lg mt-2 w-fit">
-					<EyeSlash strokeWidth="2.5" className="size-5" />{$i18n.t('Temporary Chat')}
-				</div>
-			</Tooltip>
-		{/if}
-
-		<div
-			class=" mt-2 mb-4 text-3xl text-gray-800 dark:text-gray-100 font-medium text-left flex items-center gap-4 font-primary"
-		>
-			<div>
-				<div class=" capitalize line-clamp-1" in:fade={{ duration: 200 }}>
-					{#if models[selectedModelIdx]?.name}
-						{models[selectedModelIdx]?.name}
-					{:else}
-						{$i18n.t('Hello, {{name}}', { name: $user?.name })}
-					{/if}
-				</div>
-
-				<div in:fade={{ duration: 200, delay: 200 }}>
-					{#if models[selectedModelIdx]?.info?.meta?.description ?? null}
-						<div
-							class="mt-0.5 text-base font-normal text-gray-500 dark:text-gray-400 line-clamp-3 markdown"
-						>
-							{@html marked.parse(
-								sanitizeResponseContent(models[selectedModelIdx]?.info?.meta?.description)
-							)}
-						</div>
-						{#if models[selectedModelIdx]?.info?.meta?.user}
-							<div class="mt-0.5 text-sm font-normal text-gray-400 dark:text-gray-500">
-								By
-								{#if models[selectedModelIdx]?.info?.meta?.user.community}
-									<a
-										href="https://openwebui.com/m/{models[selectedModelIdx]?.info?.meta?.user
-											.username}"
-										>{models[selectedModelIdx]?.info?.meta?.user.name
-											? models[selectedModelIdx]?.info?.meta?.user.name
-											: `@${models[selectedModelIdx]?.info?.meta?.user.username}`}</a
-									>
-								{:else}
-									{models[selectedModelIdx]?.info?.meta?.user.name}
-								{/if}
-							</div>
-						{/if}
-					{:else}
-						<div class=" font-medium text-gray-400 dark:text-gray-500 line-clamp-1 font-p">
-							{$i18n.t('How can I help you today?')}
-						</div>
-					{/if}
-				</div>
-			</div>
-		</div>
-
-		<div class=" w-full font-primary" in:fade={{ duration: 200, delay: 300 }}>
-			<Suggestions
-				className="grid grid-cols-2"
-				suggestionPrompts={atSelectedModel?.info?.meta?.suggestion_prompts ??
-					models[selectedModelIdx]?.info?.meta?.suggestion_prompts ??
-					$config?.default_prompt_suggestions ??
-					[]}
-				on:select={(e) => {
-					submitPrompt(e.detail);
-				}}
-			/>
-		</div>
-	</div>
-{/key}
+        <Pane
+            bind:pane
+            defaultSize={0}
+            onResize={(size) => {
+                if ($showControls && $isAdmin && pane?.isExpanded()) {
+                    if (size < minSize) pane.resize(minSize);
+                    localStorage.chatControlsSize = size >= minSize ? size : 0;
+                }
+            }}
+            onCollapse={() => {
+                if ($isAdmin) showControls.set(false);
+            }}
+            collapsible={$isAdmin}
+            class="z-10"
+        >
+            {#if $showControls && $isAdmin}
+                <div class="flex max-h-full min-h-full">
+                    <div class="w-full px-4 py-4 bg-white dark:shadow-lg dark:bg-gray-850 border border-gray-100 dark:border-gray-850 z-40 pointer-events-auto overflow-y-auto scrollbar-hidden">
+                        {#if $showCallOverlay}
+                            <div class="w-full h-full flex justify-center">
+                                <CallOverlay
+                                    bind:files
+                                    {submitPrompt}
+                                    {stopResponse}
+                                    {modelId}
+                                    {chatId}
+                                    {eventTarget}
+                                    on:close={() => showControls.set(false)}
+                                />
+                            </div>
+                        {:else if $showArtifacts}
+                            <Artifacts {history} overlay={dragged} />
+                        {:else if $showOverview}
+                            <Overview
+                                {history}
+                                on:nodeclick={(e) => {
+                                    if (e.detail.node.data.message.favorite) {
+                                        history.messages[e.detail.node.data.message.id].favorite = true;
+                                    } else {
+                                        history.messages[e.detail.node.data.message.id].favorite = null;
+                                    }
+                                    showMessage(e.detail.node.data.message);
+                                }}
+                                on:close={() => showControls.set(false)}
+                            />
+                        {:else}
+                            <Controls
+                                on:close={() => showControls.set(false)}
+                                {models}
+                                bind:chatFiles
+                                bind:params
+                            />
+                        {/if}
+                    </div>
+                </div>
+            {/if}
+        </Pane>
+    {/if}
+</SvelteFlowProvider>

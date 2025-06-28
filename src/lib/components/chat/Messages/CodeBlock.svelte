@@ -38,10 +38,8 @@
 	export let attributes = {};
 
 	export let className = 'my-2';
-	export let editorClassName = '';
-	export let stickyButtonsClassName = 'top-8';
 
-	let pyodideWorker = null;
+	let pyodideWorker: Worker | null = null;
 
 	let _code = '';
 	$: if (code) {
@@ -212,116 +210,114 @@
 	};
 
 	const executePythonAsWorker = async (code) => {
-		let packages = [
-			code.includes('requests') ? 'requests' : null,
-			code.includes('bs4') ? 'beautifulsoup4' : null,
-			code.includes('numpy') ? 'numpy' : null,
-			code.includes('pandas') ? 'pandas' : null,
-			code.includes('sklearn') ? 'scikit-learn' : null,
-			code.includes('scipy') ? 'scipy' : null,
-			code.includes('re') ? 'regex' : null,
-			code.includes('seaborn') ? 'seaborn' : null,
-			code.includes('sympy') ? 'sympy' : null,
-			code.includes('tiktoken') ? 'tiktoken' : null,
-			code.includes('matplotlib') ? 'matplotlib' : null,
-			code.includes('pytz') ? 'pytz' : null
-		].filter(Boolean);
+    let packages = [
+        code.includes('requests') ? 'requests' : null,
+        code.includes('bs4') ? 'beautifulsoup4' : null,
+        code.includes('numpy') ? 'numpy' : null,
+        code.includes('pandas') ? 'pandas' : null,
+        code.includes('sklearn') ? 'scikit-learn' : null,
+        code.includes('scipy') ? 'scipy' : null,
+        code.includes('re') ? 'regex' : null,
+        code.includes('seaborn') ? 'seaborn' : null,
+        code.includes('sympy') ? 'sympy' : null,
+        code.includes('tiktoken') ? 'tiktoken' : null,
+        code.includes('matplotlib') ? 'matplotlib' : null,
+        code.includes('pytz') ? 'pytz' : null
+    ].filter(Boolean);
 
-		console.log(packages);
+    console.log('Packages to install:', packages);
 
-		pyodideWorker = new PyodideWorker();
+    pyodideWorker = new PyodideWorker();
 
-		pyodideWorker.postMessage({
-			id: id,
-			code: code,
-			packages: packages
-		});
+    executing = true;
+    stdout = null;
+    stderr = null;
+    result = null;
+    files = null;
 
-		setTimeout(() => {
-			if (executing) {
-				executing = false;
-				stderr = 'Execution Time Limit Exceeded';
-				pyodideWorker.terminate();
-			}
-		}, 60000);
+    const workerReadyPromise = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            reject(new Error('Worker initialization timed out.'));
+        }, 10000);
 
-		pyodideWorker.onmessage = (event) => {
-			console.log('pyodideWorker.onmessage', event);
-			const { id, ...data } = event.data;
+        pyodideWorker.onmessage = (event) => {
+            if (event.data.type === 'worker-ready') {
+                clearTimeout(timeout);
+                resolve(event.data.pyodideVersion);
+            }
+        };
 
-			console.log(id, data);
+        pyodideWorker.onerror = (error) => {
+            clearTimeout(timeout);
+            reject(error);
+        };
+    });
 
-			if (data['stdout']) {
-				stdout = data['stdout'];
-				const stdoutLines = stdout.split('\n');
+    try {
+        await workerReadyPromise;
 
-				for (const [idx, line] of stdoutLines.entries()) {
-					if (line.startsWith('data:image/png;base64')) {
-						if (files) {
-							files.push({
-								type: 'image/png',
-								data: line
-							});
-						} else {
-							files = [
-								{
-									type: 'image/png',
-									data: line
-								}
-							];
-						}
+        // Send message to install packages and run code
+        pyodideWorker.postMessage({
+            id: id,
+            type: 'run-python',
+            code: code,
+            packages: packages
+        });
 
-						if (stdout.startsWith(`${line}\n`)) {
-							stdout = stdout.replace(`${line}\n`, ``);
-						} else if (stdout.startsWith(`${line}`)) {
-							stdout = stdout.replace(`${line}`, ``);
-						}
-					}
-				}
-			}
+        // Set timeout for execution
+        const executionTimeout = setTimeout(() => {
+            if (executing) {
+                executing = false;
+                stderr = 'Execution Time Limit Exceeded';
+                pyodideWorker.terminate();
+                toast.error('Execution timed out.');
+            }
+        }, 60000);
 
-			if (data['result']) {
-				result = data['result'];
-				const resultLines = result.split('\n');
+        pyodideWorker.onmessage = (event) => {
+            clearTimeout(executionTimeout);
 
-				for (const [idx, line] of resultLines.entries()) {
-					if (line.startsWith('data:image/png;base64')) {
-						if (files) {
-							files.push({
-								type: 'image/png',
-								data: line
-							});
-						} else {
-							files = [
-								{
-									type: 'image/png',
-									data: line
-								}
-							];
-						}
+            const data = event.data;
 
-						if (result.startsWith(`${line}\n`)) {
-							result = result.replace(`${line}\n`, ``);
-						} else if (result.startsWith(`${line}`)) {
-							result = result.replace(`${line}`, ``);
-						}
-					}
-				}
-			}
+            if (data.stdout) stdout = data.stdout;
+            if (data.stderr) stderr = data.stderr;
+            if (data.result) result = data.result;
 
-			data['stderr'] && (stderr = data['stderr']);
-			data['result'] && (result = data['result']);
+            if (data.images && Array.isArray(data.images)) {
+                files = data.images.map((img) => ({
+                    type: img.type || 'image/png',
+                    data: img.data
+                }));
+            }
 
-			executing = false;
-		};
+            executing = false;
 
-		pyodideWorker.onerror = (event) => {
-			console.log('pyodideWorker.onerror', event);
-			executing = false;
-		};
-	};
+            if (data.error) {
+                toast.error(`Error in execution:\n${data.error}`);
+            } else if (!stderr) {
+                toast.success('Code executed successfully!');
+            }
+        };
 
-	let debounceTimeout;
+        pyodideWorker.onerror = (event) => {
+            executing = false;
+            stderr = `Worker error: ${event.message}`;
+            toast.error(stderr);
+            console.error('Worker error:', event);
+        };
+
+        pyodideWorker.onmessageerror = (event) => {
+            executing = false;
+            toast.error('Message error from worker');
+            console.error('Message error:', event);
+        };
+    } catch (e) {
+        executing = false;
+        stderr = `Failed to initialize Pyodide: ${e.message}`;
+        toast.error(stderr);
+        console.error(e);
+    }
+};
 
 	const drawMermaidDiagram = async () => {
 		try {
@@ -411,180 +407,178 @@
 		}
 	});
 </script>
-
 <div>
-	<div class="relative {className} flex flex-col rounded-lg" dir="ltr">
-		{#if lang === 'mermaid'}
-			{#if mermaidHtml}
-				<SvgPanZoom
-					className=" border border-gray-100 dark:border-gray-850 rounded-lg max-h-fit overflow-hidden"
-					svg={mermaidHtml}
-					content={_token.text}
-				/>
-			{:else}
-				<pre class="mermaid">{code}</pre>
-			{/if}
-		{:else}
-			<div class="text-text-300 absolute pl-4 py-1.5 text-xs font-medium dark:text-white">
-				{lang}
-			</div>
+    <div class="relative {className} flex flex-col rounded-md bg-[#f7f7f8] dark:bg-[#232427] border border-[#e5e5e6] dark:border-[#3d3d3f] mx-auto max-w-4xl overflow-hidden" dir="ltr">
+        {#if lang === 'mermaid'}
+            {#if mermaidHtml}
+                <SvgPanZoom
+                    class="border-b border-[#e5e5e6] dark:border-[#3d3d3f] rounded-t-md overflow-hidden"
+                    svg={mermaidHtml}
+                    content={_token.text}
+                />
+            {:else}
+                <pre class="mermaid p-4 bg-[#f7f7f8] dark:bg-[#232427]">{code}</pre>
+            {/if}
+        {:else}
+            <!-- Header with language tag and controls -->
+            <div class="flex items-center justify-between px-3 py-2 bg-[#f0f0f1] dark:bg-[#2e2e32] border-b border-[#e5e5e6] dark:border-[#3d3d3f]">
+                <div class="flex items-center gap-2">
+                    <div class="inline-flex items-center gap-1.5 px-2 py-1 bg-white dark:bg-[#38383b] rounded text-xs">
+                        <div class="w-2 h-2 rounded-full bg-[#4e9efd]"></div>
+                        <span class="text-[#40414f] dark:text-[#e0e0e0] font-mono">
+                            {lang || 'Code'}
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-1">
+                    <button
+                        class="flex gap-1 items-center bg-transparent hover:bg-[#e5e5e6] dark:hover:bg-[#38383b] rounded px-2 py-1 text-xs text-[#40414f] dark:text-[#e0e0e0]"
+                        on:click={collapseCodeBlock}
+                    >
+                        <ChevronUpDown className="size-3.5" />
+                        <span>{collapsed ? $i18n.t('Expand') : $i18n.t('Collapse')}</span>
+                    </button>
 
-			<div
-				class="sticky {stickyButtonsClassName} mb-1 py-1 pr-2.5 flex items-center justify-end z-10 text-xs text-black dark:text-white"
-			>
-				<div class="flex items-center gap-0.5 translate-y-[1px]">
-					<button
-						class="flex gap-1 items-center bg-none border-none bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
-						on:click={collapseCodeBlock}
-					>
-						<div class=" -translate-y-[0.5px]">
-							<ChevronUpDown className="size-3" />
-						</div>
+                    {#if preview && ['html', 'svg'].includes(lang)}
+                        <button
+                            class="flex gap-1 items-center run-code-button bg-transparent hover:bg-[#e5e5e6] dark:hover:bg-[#38383b] rounded px-2 py-1 text-xs text-[#4e9efd] dark:text-[#4e9efd]"
+                            on:click={previewCode}
+                        >
+                            <Cube className="size-3.5" />
+                            <span>{$i18n.t('Preview')}</span>
+                        </button>
+                    {/if}
 
-						<div>
-							{collapsed ? $i18n.t('Expand') : $i18n.t('Collapse')}
-						</div>
-					</button>
+                    {#if ($config?.features?.enable_code_execution ?? true) && (lang.toLowerCase() === 'python' || lang.toLowerCase() === 'py' || (lang === '' && checkPythonCode(code)))}
+                        {#if executing}
+                            <div class="flex gap-1 items-center run-code-button bg-[#fff8e6] dark:bg-[#3a2e0f] rounded px-2 py-1 text-xs text-[#b88a00] dark:text-[#ffc533] cursor-not-allowed">
+                                <div class="w-3 h-3 border-2 border-[#b88a00] dark:border-[#ffc533] border-t-transparent rounded-full animate-spin"></div>
+                                <span>{$i18n.t('Running...')}</span>
+                            </div>
+                        {:else if run}
+                            <button
+                                class="flex gap-1 items-center run-code-button bg-transparent hover:bg-[#e5e5e6] dark:hover:bg-[#38383b] rounded px-2 py-1 text-xs text-[#2e7d32] dark:text-[#4caf50]"
+                                on:click={async () => {
+                                    code = _code;
+                                    await tick();
+                                    executePython(code);
+                                }}
+                            >
+                                <CommandLine className="size-3.5" />
+                                <span>{$i18n.t('Run')}</span>
+                            </button>
+                        {/if}
+                    {/if}
 
-					{#if preview && ['html', 'svg'].includes(lang)}
-						<button
-							class="flex gap-1 items-center run-code-button bg-none border-none bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
-							on:click={previewCode}
-						>
-							<div class=" -translate-y-[0.5px]">
-								<Cube className="size-3" />
-							</div>
+                    {#if save}
+                        <button
+                            class="save-code-button bg-transparent hover:bg-[#e5e5e6] dark:hover:bg-[#38383b] rounded px-2 py-1 text-xs text-[#40414f] dark:text-[#e0e0e0]"
+                            on:click={saveCode}
+                        >
+                            {saved ? $i18n.t('Saved') : $i18n.t('Save')}
+                        </button>
+                    {/if}
 
-							<div>
-								{$i18n.t('Preview')}
-							</div>
-						</button>
-					{/if}
+                    <button
+                        class="copy-code-button bg-transparent hover:bg-[#e5e5e6] dark:hover:bg-[#38383b] rounded px-2 py-1 text-xs text-[#40414f] dark:text-[#e0e0e0]"
+                        on:click={copyCode}
+                    >
+                        {copied ? $i18n.t('Copied') : $i18n.t('Copy')}
+                    </button>
+                </div>
+            </div>
 
-					{#if ($config?.features?.enable_code_execution ?? true) && (lang.toLowerCase() === 'python' || lang.toLowerCase() === 'py' || (lang === '' && checkPythonCode(code)))}
-						{#if executing}
-							<div class="run-code-button bg-none border-none p-1 cursor-not-allowed">
-								{$i18n.t('Running')}
-							</div>
-						{:else if run}
-							<button
-								class="flex gap-1 items-center run-code-button bg-none border-none bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
-								on:click={async () => {
-									code = _code;
-									await tick();
-									executePython(code);
-								}}
-							>
-								<div class=" -translate-y-[0.5px]">
-									<CommandLine className="size-3" />
-								</div>
+            <!-- Code editor container -->
+            <div class="relative">
+                {#if !collapsed}
+                    <div class="bg-white dark:bg-[#1e1e20]">
+                        <CodeEditor
+                            value={code}
+                            {id}
+                            {lang}
+                            onSave={() => {
+                                saveCode();
+                            }}
+                            onChange={(value) => {
+                                _code = value;
+                            }}
+                        />
+                    </div>
+                {:else}
+                    <div class="bg-[#f0f0f1] dark:bg-[#2e2e32] py-2 px-3 flex items-center gap-2 text-xs text-[#8e8e9e] dark:text-[#a0a0a5]">
+                        <span class="italic">
+                            {$i18n.t('{{COUNT}} hidden lines', {
+                                COUNT: code.split('\n').length
+                            })}
+                        </span>
+                    </div>
+                {/if}
+            </div>
 
-								<div>
-									{$i18n.t('Run')}
-								</div>
-							</button>
-						{/if}
-					{/if}
+            {#if !collapsed}
+                <!-- Plot canvas -->
+                <div id="plt-canvas-{id}" class="bg-white dark:bg-[#1e1e20] max-w-full overflow-x-auto scrollbar-hidden"></div>
 
-					{#if save}
-						<button
-							class="save-code-button bg-none border-none bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
-							on:click={saveCode}
-						>
-							{saved ? $i18n.t('Saved') : $i18n.t('Save')}
-						</button>
-					{/if}
-
-					<button
-						class="copy-code-button bg-none border-none bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
-						on:click={copyCode}>{copied ? $i18n.t('Copied') : $i18n.t('Copy')}</button
-					>
-				</div>
-			</div>
-
-			<div
-				class="language-{lang} rounded-t-lg -mt-8 {editorClassName
-					? editorClassName
-					: executing || stdout || stderr || result
-						? ''
-						: 'rounded-b-lg'} overflow-hidden"
-			>
-				<div class=" pt-7 bg-gray-50 dark:bg-gray-850"></div>
-
-				{#if !collapsed}
-					<CodeEditor
-						value={code}
-						{id}
-						{lang}
-						onSave={() => {
-							saveCode();
-						}}
-						onChange={(value) => {
-							_code = value;
-						}}
-					/>
-				{:else}
-					<div
-						class="bg-gray-50 dark:bg-black dark:text-white rounded-b-lg! pt-2 pb-2 px-4 flex flex-col gap-2 text-xs"
-					>
-						<span class="text-gray-500 italic">
-							{$i18n.t('{{COUNT}} hidden lines', {
-								COUNT: code.split('\n').length
-							})}
-						</span>
-					</div>
-				{/if}
-			</div>
-
-			{#if !collapsed}
-				<div
-					id="plt-canvas-{id}"
-					class="bg-gray-50 dark:bg-[#202123] dark:text-white max-w-full overflow-x-auto scrollbar-hidden"
-				/>
-
-				{#if executing || stdout || stderr || result || files}
-					<div
-						class="bg-gray-50 dark:bg-[#202123] dark:text-white rounded-b-lg! py-4 px-4 flex flex-col gap-2"
-					>
-						{#if executing}
-							<div class=" ">
-								<div class=" text-gray-500 text-xs mb-1">STDOUT/STDERR</div>
-								<div class="text-sm">Running...</div>
-							</div>
-						{:else}
-							{#if stdout || stderr}
-								<div class=" ">
-									<div class=" text-gray-500 text-xs mb-1">STDOUT/STDERR</div>
-									<div
-										class="text-sm {stdout?.split('\n')?.length > 100
-											? `max-h-96`
-											: ''}  overflow-y-auto"
-									>
-										{stdout || stderr}
-									</div>
-								</div>
-							{/if}
-							{#if result || files}
-								<div class=" ">
-									<div class=" text-gray-500 text-xs mb-1">RESULT</div>
-									{#if result}
-										<div class="text-sm">{`${JSON.stringify(result)}`}</div>
-									{/if}
-									{#if files}
-										<div class="flex flex-col gap-2">
-											{#each files as file}
-												{#if file.type.startsWith('image')}
-													<img src={file.data} alt="Output" class=" w-full max-w-[36rem]" />
-												{/if}
-											{/each}
-										</div>
-									{/if}
-								</div>
-							{/if}
-						{/if}
-					</div>
-				{/if}
-			{/if}
-		{/if}
-	</div>
+                <!-- Output section -->
+                {#if executing || stdout || stderr || result || files}
+                    <div class="bg-[#f0f0f1] dark:bg-[#2e2e32] border-t border-[#e5e5e6] dark:border-[#3d3d3f]">
+                        {#if executing}
+                            <div class="p-3">
+                                <div class="flex items-center gap-2 text-[#b88a00] dark:text-[#ffc533] text-sm">
+                                    <div class="w-4 h-4 border-2 border-[#b88a00] dark:border-[#ffc533] border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Executing code...</span>
+                                </div>
+                            </div>
+                        {:else}
+                            <div class="p-3 space-y-3">
+                                {#if stdout || stderr}
+                                    <div class="space-y-1">
+                                        <div class="flex items-center gap-2 text-xs text-[#8e8e9e] dark:text-[#a0a0a5]">
+                                            <div class="w-1.5 h-1.5 rounded-full bg-[#4caf50]"></div>
+                                            <span>Output</span>
+                                        </div>
+                                        <pre class="text-sm bg-white dark:bg-[#1e1e20] p-2 rounded border border-[#e5e5e6] dark:border-[#3d3d3f] overflow-x-auto text-[#40414f] dark:text-[#e0e0e0]">
+{stdout || stderr}
+                                        </pre>
+                                    </div>
+                                {/if}
+                                
+                                {#if result || files}
+                                    <div class="space-y-1">
+                                        <div class="flex items-center gap-2 text-xs text-[#8e8e9e] dark:text-[#a0a0a5]">
+                                            <div class="w-1.5 h-1.5 rounded-full bg-[#4e9efd]"></div>
+                                            <span>Result</span>
+                                        </div>
+                                        
+                                        {#if result}
+                                            <pre class="text-sm bg-white dark:bg-[#1e1e20] p-2 rounded border border-[#e5e5e6] dark:border-[#3d3d3f] overflow-x-auto text-[#40414f] dark:text-[#e0e0e0]">
+{JSON.stringify(result, null, 2)}
+                                            </pre>
+                                        {/if}
+                                        
+                                        {#if files}
+                                            <div class="grid gap-2 mt-2">
+                                                {#each files as file}
+                                                    {#if file.type.startsWith('image')}
+                                                        <div class="bg-white dark:bg-[#1e1e20] p-1 rounded border border-[#e5e5e6] dark:border-[#3d3d3f]">
+                                                            <img 
+                                                                src={file.data} 
+                                                                alt="Generated output" 
+                                                                class="w-full max-w-2xl rounded" 
+                                                            />
+                                                        </div>
+                                                    {/if}
+                                                {/each}
+                                            </div>
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
+            {/if}
+        {/if}
+    </div>
 </div>
